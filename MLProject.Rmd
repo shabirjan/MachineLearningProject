@@ -1,0 +1,154 @@
+---
+output: html_document
+---
+# Practical Machine Learning : Project Write Up
+## Shabir Jan
+
+#Project Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ??? a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+## Data Provided for Project
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+## Predication Algorithms
+Steps taken for cleaning data and creating Training and Testing data sets.  
+
+        1. Tidy data. Removed columns with no data.
+        2. Create Training and Test data from training data for cross validation checking.
+        3. Try 2 Prediction Algorithms Random Forest and Linear discriminant analysis.
+        4. Finall fine tune model through combinations of above methods , reducation of variables. This will improve accuracy and speed of analysis.
+        
+```{r loadingLibraries,echo=TRUE}
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(e1071)
+library(gbm)
+library(doParallel)
+library(survival)
+library(splines)
+library(plyr)
+```
+
+## Getting the Data
+Getting training data set from the URL
+```{r trainFile,echo=TRUE}
+trainURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+```
+Getting testing data set from the URL
+```{r testFile,echo=TRUE}
+testURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+## Loading the Data
+Loading the data with removing "#DIV/0!" .
+```{r trainingData,echo=TRUE,cache=TRUE}
+training <- read.csv(url(trainURL),na.strings=c("#DIV/0!"),row.names=1)
+testing <- read.csv(url(testURL),na.strings=c("#DIV/0!"),row.names=1)
+
+```
+## Generating Training and Testing data sets
+We will generate 60% Training and 40% Testing
+```{r traintest,echo=TRUE,cache=TRUE}
+training <- training[, 6:dim(training)[2]]
+
+treshold <- dim(training)[1] * 0.95
+## Removing columns with >95% NA or empty
+goodColumnValues <- !apply(training,2,function(x)sum(is.na(x))>treshold || sum(x=="")>treshold)
+
+training <- training[,goodColumnValues]
+
+badColumnValues <- nearZeroVar(training,saveMetrics=TRUE)
+
+training <- training[,badColumnValues$nzv==FALSE]
+
+
+
+
+inTrain <- createDataPartition(training$classe,p=0.6)[[1]]
+crossVali <- training[-inTrain,]
+training <- training[inTrain,]
+inTrain <- createDataPartition(crossVali$classe,p=0.75)[[1]]
+crossValiT <- crossVali[-inTrain,]
+
+testing <- testing[,6:dim(testing)[2]]
+testing <- testing[,goodColumnValues]
+testing$classe <- NA
+testing <- testing[, badColumnValues$nzv==FALSE]
+```
+
+## Train Models
+After subsetting data set into training and testing, now we will train the data by using three different Prediction Algorithms.
+
+##Random Forest
+First we will check the Random Forest Algorithm. 
+```{r randomForest,echo=TRUE,cache=TRUE}
+# Configure the train control for cross-validation
+tc = trainControl(method = "cv", number = 4)
+
+rfModel <- train(classe~.,data=training,method="rf",trControl = tc,
+                prox = TRUE,
+                allowParallel = TRUE)
+rfPredict <- predict(rfModel,crossVali)
+confusionMatrix(rfPredict, crossVali$classe)
+```
+
+and Lastly we will check the Linear discriminant analysis.
+```{r lda,echo=TRUE,cache=TRUE}
+ldaModel <- train(classe~.,data=training,method="lda")
+ldaPredict <- predict(ldaModel,crossVali)
+confusionMatrix(ldaPredict,crossVali$classe)
+```
+
+##Out of Sample Error
+```{r outofsample,echo=TRUE,cache=TRUE}
+rfPredict <- predict(rfModel,crossValiT)
+ldaPredict <- predict(ldaModel,crossValiT)
+rfAccuracy <- sum(rfPredict==crossValiT$classe) / length(rfPredict)
+rfAccuracy
+ldaAccuracy <- sum(ldaPredict==crossValiT$classe) / length(ldaPredict)
+ldaAccuracy
+```
+So based on the ConfusionMatrix results we can clearly see that the Random Forest prediction is more better than LDA as the accuracy of the RF Prediction model is 99.6% and accuarcy of LDA Prediction model is less than RF Model.
+And for the sake of verifying our results we also checked the out of sample error for both models and RF model has 99.7% accuracy on the validation set. 
+
+So we will use Random Forest Prediction model.
+
+##Improving Relevant Variable
+Total number of relevant variables in the dataset.
+```{r relvaraibles,echo=TRUE,cache=TRUE}
+relVarRF <- train(classe~.,data=training,method="rf")
+varImpRF <- varImp(relVarRF)
+##Plot for top 50
+plot(varImpRF,main="Top 50 Variables Relevance",top=50)
+
+##Plot for top 26
+plot(varImpRF,main="Top 50 Variables Relevance",top=25)
+```
+
+##Conculusion
+So from above we can conclude that RF model work very well with our dataset as by seeing both **Confusion Matrix** accuracy is **96.6%**, and **Out of Sample Error** accuracy is **`r rfAccuracy`**.
+
+So this model will be used for the final calucations for the dataset.
+
+##Exporting Results (Code Provided by Coursera Course Page)
+```{r pmlmethod,echo=TRUE,cache=TRUE}
+pml_write_files=function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+predications <- predict(rfModel,newdata=testing)
+predications
+pml_write_files(predications)
+```
